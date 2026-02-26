@@ -132,17 +132,35 @@ function extractMetric(
   const usGaap = facts?.['us-gaap'];
   if (!usGaap) return [];
 
+  // MERGE data from ALL matching tags
+  // Why merge? Companies like Google use different tags for different periods:
+  // - RevenueFromContractWithCustomer for Q1 2025
+  // - Revenues for Q2/Q3 2025
+  // Neither tag alone has complete coverage, so we combine them.
+  const allData: FactData[] = [];
+  const seenPeriods = new Set<string>();
+
   for (const tagName of tagNames) {
     const concept = usGaap[tagName] as Record<string, unknown> | undefined;
     if (concept) {
       const units = concept.units as Record<string, FactData[]> | undefined;
       if (units && units[unit]) {
-        return units[unit];
+        for (const fact of units[unit]) {
+          // Create a unique key for this period
+          const periodKey = `${fact.fy}-${fact.fp}-${fact.form}-${fact.end}`;
+
+          // Only add if we haven't seen this exact period before
+          // This prevents duplicates while allowing different tags to fill gaps
+          if (!seenPeriods.has(periodKey)) {
+            seenPeriods.add(periodKey);
+            allData.push(fact);
+          }
+        }
       }
     }
   }
 
-  return [];
+  return allData;
 }
 
 /**
@@ -191,26 +209,41 @@ export function parseFinancialData(
   cik: string
 ): CompanyFinancials {
   // XBRL tags for each metric (in order of preference)
+  // Why so many tags? Different industries use different accounting:
+  // - Regular companies: RevenueFromContractWithCustomer, Revenues
+  // - Banks/Financial: RevenuesNetOfInterestExpense, InterestAndDividendIncomeOperating
+  // - Insurance: PremiumsEarnedNet
   const revenueTags = [
     'RevenueFromContractWithCustomerExcludingAssessedTax',
     'Revenues',
+    'RevenuesNetOfInterestExpense',           // Banks (Morgan Stanley, Goldman Sachs)
+    'InterestAndNoninterestIncome',           // Banks
     'SalesRevenueNet',
     'SalesRevenueGoodsNet',
     'TotalRevenuesAndOtherIncome',
-    'RevenueFromContractWithCustomerIncludingAssessedTax'
+    'RevenueFromContractWithCustomerIncludingAssessedTax',
+    'NoninterestIncome',                       // Banks - fee income
+    'InterestAndDividendIncomeOperating',     // Banks - interest income
+    'PremiumsEarnedNet',                       // Insurance companies
+    'TotalRevenues'
   ];
 
   const operatingIncomeTags = [
     'OperatingIncomeLoss',
     'IncomeLossFromOperations',
-    'OperatingIncome'
+    'OperatingIncome',
+    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest', // Banks
+    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments',
+    'NetIncomeLoss',                           // Fallback for banks
+    'IncomeLossBeforeIncomeTaxes'              // Banks often use this
   ];
 
   // For EBITDA, we need Operating Income + Depreciation + Amortization
   const depreciationTags = [
     'DepreciationDepletionAndAmortization',
     'DepreciationAndAmortization',
-    'Depreciation'
+    'Depreciation',
+    'DepreciationAmortizationAndAccretionNet'  // Some financial companies
   ];
 
   // Extract raw data

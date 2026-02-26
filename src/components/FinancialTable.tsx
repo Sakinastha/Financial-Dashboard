@@ -1,28 +1,18 @@
 /**
- * FinancialTable Component
- *
- * Why a reusable component?
- * - Same structure for quarterly and annual data
- * - Change once, updates everywhere
- * - DRY (Don't Repeat Yourself) principle
+ * FinancialTable Component - Professional Dark Theme
  */
 
 import { FinancialData } from '@/types/financials';
 
 interface FinancialTableProps {
   title: string;
+  subtitle?: string;
   data: FinancialData[];
+  isQuarterly?: boolean;
 }
 
-/**
- * Format large numbers for display
- *
- * Why format numbers?
- * - "383285000000" is hard to read
- * - "$383.3B" is instantly understood
- */
 function formatCurrency(value: number | null): string {
-  if (value === null) return 'N/A';
+  if (value === null) return '—';
 
   const absValue = Math.abs(value);
   const sign = value < 0 ? '-' : '';
@@ -38,57 +28,55 @@ function formatCurrency(value: number | null): string {
   }
 }
 
-/**
- * Format percentage values
- */
 function formatPercent(value: number | null): string {
-  if (value === null) return 'N/A';
+  if (value === null) return '—';
   const sign = value >= 0 ? '+' : '';
   return `${sign}${value.toFixed(1)}%`;
 }
 
-/**
- * Get color class for growth values
- *
- * Why color coding?
- * - Positive growth = green (good)
- * - Negative growth = red (concerning)
- * - Visual scanning is faster than reading numbers
- */
-function getGrowthColorClass(value: number | null): string {
-  if (value === null) return 'text-gray-500';
-  if (value > 0) return 'text-green-600';
-  if (value < 0) return 'text-red-600';
-  return 'text-gray-600';
+function formatMargin(value: number | null): string {
+  if (value === null) return '—';
+  return `${value.toFixed(1)}%`;
 }
 
-export default function FinancialTable({ title, data }: FinancialTableProps) {
+function getGrowthColor(value: number | null): string {
+  if (value === null) return 'text-slate-500';
+  if (value > 0) return 'text-emerald-400';
+  if (value < 0) return 'text-red-400';
+  return 'text-slate-400';
+}
+
+export default function FinancialTable({ title, subtitle, data, isQuarterly = true }: FinancialTableProps) {
   if (data.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4">{title}</h2>
-        <p className="text-gray-500">No data available</p>
+      <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        {subtitle && <p className="text-sm text-slate-400 mt-1">{subtitle}</p>}
+        <p className="text-slate-500 mt-4">No data available</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-200">
-        <h2 className="text-xl font-semibold text-gray-900">{title}</h2>
+    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-slate-700/50">
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        {subtitle && <p className="text-sm text-slate-400 mt-0.5">{subtitle}</p>}
       </div>
 
+      {/* Table */}
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Period
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-slate-700/50">
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider bg-slate-800/50 sticky left-0">
+                Metric
               </th>
               {data.map((item) => (
                 <th
                   key={item.period}
-                  className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
+                  className="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider whitespace-nowrap"
                 >
                   {item.period}
                 </th>
@@ -96,108 +84,112 @@ export default function FinancialTable({ title, data }: FinancialTableProps) {
             </tr>
           </thead>
 
-          <tbody className="bg-white divide-y divide-gray-200">
-            {/* Revenue Row */}
-            <tr>
-              <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                Revenue
+          <tbody className="divide-y divide-slate-700/30">
+            {/* Revenue Section */}
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm font-medium text-white bg-slate-800/30 sticky left-0">
+                <div className="flex items-center">
+                  <span className="w-1 h-4 bg-emerald-500 rounded-full mr-3"></span>
+                  Revenue
+                </div>
               </td>
               {data.map((item) => (
-                <td key={item.period} className="px-4 py-3 text-sm text-right text-gray-900">
+                <td key={item.period} className="px-4 py-3 text-sm text-right text-white font-medium whitespace-nowrap">
                   {formatCurrency(item.revenue)}
                 </td>
               ))}
             </tr>
 
-            {/* Revenue Y/Y Growth Row */}
-            <tr className="bg-gray-50">
-              <td className="px-4 py-3 text-sm text-gray-600 pl-8">
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm text-slate-400 bg-slate-800/30 sticky left-0 pl-8">
                 Y/Y Growth
               </td>
               {data.map((item) => (
                 <td
                   key={item.period}
-                  className={`px-4 py-3 text-sm text-right ${getGrowthColorClass(item.revenueGrowth)}`}
+                  className={`px-4 py-3 text-sm text-right font-medium whitespace-nowrap ${getGrowthColor(item.revenueGrowth)}`}
                 >
                   {formatPercent(item.revenueGrowth)}
                 </td>
               ))}
             </tr>
 
-            {/* Operating Income Row */}
-            <tr>
-              <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                Operating Income
+            {/* Operating Income Section */}
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm font-medium text-white bg-slate-800/30 sticky left-0">
+                <div className="flex items-center">
+                  <span className="w-1 h-4 bg-cyan-500 rounded-full mr-3"></span>
+                  Operating Income
+                </div>
               </td>
               {data.map((item) => (
-                <td key={item.period} className="px-4 py-3 text-sm text-right text-gray-900">
+                <td key={item.period} className="px-4 py-3 text-sm text-right text-white font-medium whitespace-nowrap">
                   {formatCurrency(item.operatingIncome)}
                 </td>
               ))}
             </tr>
 
-            {/* Operating Income Y/Y Growth Row */}
-            <tr className="bg-gray-50">
-              <td className="px-4 py-3 text-sm text-gray-600 pl-8">
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm text-slate-400 bg-slate-800/30 sticky left-0 pl-8">
                 Y/Y Growth
               </td>
               {data.map((item) => (
                 <td
                   key={item.period}
-                  className={`px-4 py-3 text-sm text-right ${getGrowthColorClass(item.operatingIncomeGrowth)}`}
+                  className={`px-4 py-3 text-sm text-right font-medium whitespace-nowrap ${getGrowthColor(item.operatingIncomeGrowth)}`}
                 >
                   {formatPercent(item.operatingIncomeGrowth)}
                 </td>
               ))}
             </tr>
 
-            {/* Operating Margin Row */}
-            <tr>
-              <td className="px-4 py-3 text-sm text-gray-600 pl-8">
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm text-slate-400 bg-slate-800/30 sticky left-0 pl-8">
                 Margin
               </td>
               {data.map((item) => (
-                <td key={item.period} className="px-4 py-3 text-sm text-right text-gray-600">
-                  {item.operatingMargin !== null ? `${item.operatingMargin.toFixed(1)}%` : 'N/A'}
+                <td key={item.period} className="px-4 py-3 text-sm text-right text-slate-300 whitespace-nowrap">
+                  {formatMargin(item.operatingMargin)}
                 </td>
               ))}
             </tr>
 
-            {/* EBITDA Row */}
-            <tr className="bg-gray-50">
-              <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                EBITDA
+            {/* EBITDA Section */}
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm font-medium text-white bg-slate-800/30 sticky left-0">
+                <div className="flex items-center">
+                  <span className="w-1 h-4 bg-violet-500 rounded-full mr-3"></span>
+                  EBITDA
+                </div>
               </td>
               {data.map((item) => (
-                <td key={item.period} className="px-4 py-3 text-sm text-right text-gray-900">
+                <td key={item.period} className="px-4 py-3 text-sm text-right text-white font-medium whitespace-nowrap">
                   {formatCurrency(item.ebitda)}
                 </td>
               ))}
             </tr>
 
-            {/* EBITDA Y/Y Growth Row */}
-            <tr>
-              <td className="px-4 py-3 text-sm text-gray-600 pl-8">
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm text-slate-400 bg-slate-800/30 sticky left-0 pl-8">
                 Y/Y Growth
               </td>
               {data.map((item) => (
                 <td
                   key={item.period}
-                  className={`px-4 py-3 text-sm text-right ${getGrowthColorClass(item.ebitdaGrowth)}`}
+                  className={`px-4 py-3 text-sm text-right font-medium whitespace-nowrap ${getGrowthColor(item.ebitdaGrowth)}`}
                 >
                   {formatPercent(item.ebitdaGrowth)}
                 </td>
               ))}
             </tr>
 
-            {/* EBITDA Margin Row */}
-            <tr className="bg-gray-50">
-              <td className="px-4 py-3 text-sm text-gray-600 pl-8">
+            <tr className="hover:bg-slate-700/20 transition-colors">
+              <td className="px-4 py-3 text-sm text-slate-400 bg-slate-800/30 sticky left-0 pl-8">
                 Margin
               </td>
               {data.map((item) => (
-                <td key={item.period} className="px-4 py-3 text-sm text-right text-gray-600">
-                  {item.ebitdaMargin !== null ? `${item.ebitdaMargin.toFixed(1)}%` : 'N/A'}
+                <td key={item.period} className="px-4 py-3 text-sm text-right text-slate-300 whitespace-nowrap">
+                  {formatMargin(item.ebitdaMargin)}
                 </td>
               ))}
             </tr>
