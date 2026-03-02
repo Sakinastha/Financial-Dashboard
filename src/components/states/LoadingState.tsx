@@ -7,112 +7,65 @@ interface LoadingStateProps {
   message?: string;
 }
 
-export default function LoadingState({ message = 'Fetching data from SEC EDGAR...' }: LoadingStateProps) {
+export default function LoadingState({ message = 'Fetching data from SEC EDGAR' }: LoadingStateProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const spinnerRef = useRef<HTMLDivElement>(null);
-  const dotsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!containerRef.current || !spinnerRef.current) return;
+    if (!containerRef.current) return;
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion) return;
-
-    // Fade in container
-    gsap.fromTo(
-      containerRef.current,
-      { opacity: 0, y: 20 },
-      { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' }
-    );
-
-    // Pulse animation for spinner glow
-    gsap.to(spinnerRef.current, {
-      boxShadow: '0 0 40px rgba(59, 130, 246, 0.5), 0 0 80px rgba(139, 92, 246, 0.3)',
-      duration: 1,
-      repeat: -1,
-      yoyo: true,
-      ease: 'sine.inOut',
-    });
-
-    // Animate dots
-    if (dotsRef.current) {
-      const dots = dotsRef.current.querySelectorAll('.dot');
-      gsap.to(dots, {
-        y: -5,
-        duration: 0.4,
-        stagger: 0.15,
-        repeat: -1,
-        yoyo: true,
-        ease: 'sine.inOut',
-      });
+    if (prefersReducedMotion) {
+      gsap.set(containerRef.current, { opacity: 1 });
+      return;
     }
 
-    return () => {
-      gsap.killTweensOf(spinnerRef.current);
-    };
+    gsap.fromTo(
+      containerRef.current,
+      { opacity: 0, y: 10 },
+      { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' }
+    );
   }, []);
 
   return (
-    <div ref={containerRef} className="flex flex-col items-center justify-center py-32" style={{ opacity: 0 }}>
-      {/* Spinner */}
-      <div
-        ref={spinnerRef}
-        className="relative w-20 h-20 rounded-full"
-        style={{ boxShadow: '0 0 20px rgba(59, 130, 246, 0.3)' }}
-      >
-        {/* Outer ring */}
-        <div className="absolute inset-0 border-4 border-white/5 rounded-full" />
+    <div ref={containerRef} className="flex flex-col items-center justify-center py-20" style={{ opacity: 0 }}>
+      {/* Terminal-style loading */}
+      <div className="bg-[#111] border border-[#222] rounded-lg p-6 min-w-[300px]">
+        {/* Terminal header */}
+        <div className="flex items-center gap-2 pb-4 border-b border-[#1a1a1a] mb-4">
+          <div className="flex gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-[#ff5f57]"></div>
+            <div className="w-2 h-2 rounded-full bg-[#febc2e]"></div>
+            <div className="w-2 h-2 rounded-full bg-[#28c840]"></div>
+          </div>
+          <span className="text-[9px] text-gray-600 font-mono ml-2">loading</span>
+        </div>
 
-        {/* Gradient spinning ring */}
-        <div
-          className="absolute inset-0 rounded-full animate-spin"
-          style={{
-            background: 'conic-gradient(from 0deg, transparent, #3b82f6, #8b5cf6, transparent)',
-            mask: 'radial-gradient(farthest-side, transparent calc(100% - 4px), black calc(100% - 4px))',
-            WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 4px), black calc(100% - 4px))',
-          }}
-        />
-
-        {/* Inner icon */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-            <svg
-              className="w-6 h-6 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-              />
-            </svg>
+        {/* Loading animation */}
+        <div className="flex items-center gap-3">
+          <div className="relative w-5 h-5">
+            <div className="absolute inset-0 border-2 border-[#222] rounded-full" />
+            <div className="absolute inset-0 border-2 border-[#2196f3] rounded-full animate-spin border-t-transparent" />
+          </div>
+          <div className="font-mono text-sm text-gray-400">
+            <span className="text-[#2196f3]">$</span> {message}
+            <span className="inline-block w-2 h-4 bg-[#2196f3] ml-1 animate-pulse"></span>
           </div>
         </div>
-      </div>
 
-      {/* Message with animated dots */}
-      <div className="mt-6 flex items-center gap-1">
-        <p className="text-gray-400 text-sm">{message}</p>
-        <div ref={dotsRef} className="flex gap-0.5 ml-1">
-          <span className="dot w-1 h-1 bg-blue-400 rounded-full" />
-          <span className="dot w-1 h-1 bg-purple-400 rounded-full" />
-          <span className="dot w-1 h-1 bg-pink-400 rounded-full" />
-        </div>
-      </div>
-
-      {/* Skeleton preview */}
-      <div className="mt-8 w-full max-w-lg">
-        <div className="grid grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div
-              key={i}
-              className="skeleton h-20 rounded-xl"
-              style={{ animationDelay: `${i * 0.1}s` }}
-            />
-          ))}
+        {/* Progress indicators */}
+        <div className="mt-4 space-y-2">
+          <div className="flex items-center gap-2 text-xs font-mono">
+            <span className="text-[#00c853]">✓</span>
+            <span className="text-gray-500">Connecting to SEC EDGAR API</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-mono">
+            <span className="w-3 h-3 border border-[#2196f3] rounded-full animate-pulse"></span>
+            <span className="text-gray-400">Parsing XBRL data...</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-mono">
+            <span className="text-gray-600">○</span>
+            <span className="text-gray-600">Calculating metrics</span>
+          </div>
         </div>
       </div>
     </div>

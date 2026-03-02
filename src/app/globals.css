@@ -1,43 +1,48 @@
 @import "tailwindcss";
 
 /* ============================================
-   FINANCIAL DASHBOARD - DESIGN SYSTEM
-   Professional SaaS with Glassmorphism
+   FINANCIAL DASHBOARD - BLOOMBERG TERMINAL STYLE
+   Professional Financial Data Terminal
    ============================================ */
 
 /* ============================================
    CSS VARIABLES
    ============================================ */
 :root {
-  /* Background Colors */
-  --bg-primary: #050810;
-  --bg-secondary: #0d1321;
-  --bg-tertiary: #141b2d;
-  --bg-card: rgba(13, 19, 33, 0.7);
-  --bg-card-hover: rgba(20, 27, 45, 0.8);
+  /* Background Colors - Deeper blacks like Bloomberg */
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111111;
+  --bg-tertiary: #1a1a1a;
+  --bg-card: rgba(17, 17, 17, 0.95);
+  --bg-card-hover: rgba(26, 26, 26, 0.98);
 
-  /* Glass Effects */
-  --glass-bg: rgba(13, 19, 33, 0.6);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-border-hover: rgba(255, 255, 255, 0.15);
-  --glass-blur: 20px;
+  /* Glass Effects - Subtle, professional */
+  --glass-bg: rgba(17, 17, 17, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-border-hover: rgba(255, 255, 255, 0.12);
+  --glass-blur: 12px;
 
-  /* Accent Colors */
-  --accent-blue: #3b82f6;
-  --accent-blue-glow: rgba(59, 130, 246, 0.5);
-  --accent-purple: #8b5cf6;
-  --accent-purple-glow: rgba(139, 92, 246, 0.5);
-  --accent-pink: #ec4899;
-  --accent-pink-glow: rgba(236, 72, 153, 0.5);
-  --accent-cyan: #06b6d4;
-  --accent-emerald: #10b981;
-  --accent-red: #ef4444;
+  /* Financial Terminal Colors */
+  --accent-blue: #2196f3;
+  --accent-blue-glow: rgba(33, 150, 243, 0.4);
+  --accent-orange: #ff9800;
+  --accent-orange-glow: rgba(255, 152, 0, 0.4);
+  --accent-cyan: #00bcd4;
+  --accent-green: #00c853;
+  --accent-red: #ff5252;
+  --accent-yellow: #ffd600;
+  --accent-purple: #7c4dff;
 
-  /* Text Colors */
+  /* Text Colors - High contrast for data readability */
   --text-primary: #ffffff;
-  --text-secondary: #94a3b8;
-  --text-tertiary: #64748b;
-  --text-muted: #475569;
+  --text-secondary: #b0b0b0;
+  --text-tertiary: #808080;
+  --text-muted: #606060;
+
+  /* Financial Data Colors */
+  --positive: #00c853;
+  --negative: #ff5252;
+  --neutral: #808080;
 
   /* Gradients */
   --gradient-blue-purple: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
@@ -74,7 +79,7 @@
 }
 
 /* ============================================
-   BASE STYLES
+   BASE STYLES - TERMINAL AESTHETIC
    ============================================ */
 * {
   box-sizing: border-box;
@@ -91,9 +96,10 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'tnum' 1; /* Tabular numbers for alignment */
 }
 
-/* Background gradient overlay */
+/* Subtle terminal grid pattern */
 body::before {
   content: '';
   position: fixed;
@@ -102,11 +108,26 @@ body::before {
   right: 0;
   bottom: 0;
   background:
-    radial-gradient(ellipse at 20% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 100%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(236, 72, 153, 0.03) 0%, transparent 70%);
+    linear-gradient(rgba(33, 150, 243, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(33, 150, 243, 0.02) 1px, transparent 1px);
+  background-size: 50px 50px;
   pointer-events: none;
   z-index: -1;
+}
+
+/* ============================================
+   TERMINAL NUMBER FORMATTING
+   ============================================ */
+.font-mono-numbers {
+  font-family: var(--font-mono), 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: -0.02em;
+}
+
+.data-value {
+  font-family: var(--font-mono), 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 /* ============================================

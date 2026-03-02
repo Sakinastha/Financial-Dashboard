@@ -16,7 +16,6 @@ import FinancialTable from '@/components/FinancialTable';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import AnimatedSearchInput from '@/components/search/AnimatedSearchInput';
-import MetricCard from '@/components/metrics/MetricCard';
 import LoadingState from '@/components/states/LoadingState';
 import EmptyState from '@/components/states/EmptyState';
 import ErrorAlert from '@/components/states/ErrorAlert';
@@ -252,7 +251,7 @@ function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#050810] flex flex-col relative">
+    <div className="min-h-screen bg-[#0a0a0a] flex flex-col relative">
       {/* Animated Background */}
       <AnimatedBackground />
 
@@ -283,65 +282,75 @@ function Dashboard() {
         {/* Data Display */}
         {data && (
           <>
-            {/* Company Header */}
-            <div ref={companyHeaderRef} className="mb-8" style={{ opacity: 0 }}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-3xl font-bold text-white tracking-tight">{data.companyName}</h2>
-                    <span className="px-3 py-1.5 bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30 text-blue-400 text-sm font-semibold rounded-lg">
-                      {data.ticker}
-                    </span>
+            {/* Company Header - Terminal Style */}
+            <div ref={companyHeaderRef} className="mb-6" style={{ opacity: 0 }}>
+              <div className="bg-[#111] border border-[#222] rounded-lg p-4">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="px-2.5 py-1 bg-[#2196f3] text-white text-sm font-mono font-bold rounded">
+                        {data.ticker}
+                      </span>
+                      <h2 className="text-xl font-semibold text-white">{data.companyName}</h2>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-gray-500 font-mono">
+                      <span>CIK: {data.cik}</span>
+                      <span className="hidden sm:inline text-gray-700">|</span>
+                      <span>FY End: <span className="text-gray-400">{data.fiscalYearEnd}</span></span>
+                      <span className="hidden sm:inline text-gray-700">|</span>
+                      <span>Source: <span className="text-[#2196f3]">SEC EDGAR</span></span>
+                    </div>
                   </div>
-                  <p className="text-gray-500 text-sm mt-2">
-                    CIK: {data.cik}
-                    <span className="mx-2 text-gray-700">|</span>
-                    Fiscal Year End: {data.fiscalYearEnd}
-                    <span className="mx-2 text-gray-700">|</span>
-                    Data from SEC EDGAR 10-K and 10-Q filings
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-gray-500 uppercase tracking-wider">Last Updated</p>
-                  <p className="text-sm text-gray-400 mt-1">{new Date().toLocaleDateString()}</p>
+                  <div className="text-left sm:text-right">
+                    <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">Last Updated</p>
+                    <p className="text-xs text-gray-400 font-mono mt-0.5">{new Date().toLocaleDateString()}</p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Key Metrics Summary */}
-            <div ref={metricsRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-              <MetricCard
-                label="Annual Revenue"
-                value={data.annual[0]?.revenue}
-                growth={data.annual[0]?.revenueGrowth}
-                period={data.annual[0]?.period}
-                icon="revenue"
-                delay={0}
-              />
-              <MetricCard
-                label="Operating Income"
-                value={data.annual[0]?.operatingIncome}
-                growth={data.annual[0]?.operatingIncomeGrowth}
-                period={data.annual[0]?.period}
-                icon="income"
-                delay={0.1}
-              />
-              <MetricCard
-                label="EBITDA"
-                value={data.annual[0]?.ebitda}
-                growth={data.annual[0]?.ebitdaGrowth}
-                period={data.annual[0]?.period}
-                icon="ebitda"
-                delay={0.2}
-              />
-              <MetricCard
-                label="Operating Margin"
-                value={data.annual[0]?.operatingMargin}
-                isPercent
-                period={data.annual[0]?.period}
-                icon="margin"
-                delay={0.3}
-              />
+            {/* Key Metrics Summary - Terminal Style */}
+            <div ref={metricsRef} className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+              <div className="bg-[#111] border border-[#222] rounded-lg p-3">
+                <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Annual Revenue</p>
+                <p className="text-lg font-bold text-white font-mono">
+                  {data.annual[0]?.revenue ? `$${(data.annual[0].revenue / 1e9).toFixed(1)}B` : '—'}
+                </p>
+                {data.annual[0]?.revenueGrowth !== null && data.annual[0]?.revenueGrowth !== undefined && (
+                  <p className={`text-xs font-mono ${data.annual[0].revenueGrowth >= 0 ? 'text-[#00c853]' : 'text-[#ff5252]'}`}>
+                    {data.annual[0].revenueGrowth >= 0 ? '+' : ''}{data.annual[0].revenueGrowth.toFixed(1)}% Y/Y
+                  </p>
+                )}
+              </div>
+              <div className="bg-[#111] border border-[#222] rounded-lg p-3">
+                <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Operating Income</p>
+                <p className="text-lg font-bold text-white font-mono">
+                  {data.annual[0]?.operatingIncome ? `$${(data.annual[0].operatingIncome / 1e9).toFixed(1)}B` : '—'}
+                </p>
+                {data.annual[0]?.operatingIncomeGrowth !== null && data.annual[0]?.operatingIncomeGrowth !== undefined && (
+                  <p className={`text-xs font-mono ${data.annual[0].operatingIncomeGrowth >= 0 ? 'text-[#00c853]' : 'text-[#ff5252]'}`}>
+                    {data.annual[0].operatingIncomeGrowth >= 0 ? '+' : ''}{data.annual[0].operatingIncomeGrowth.toFixed(1)}% Y/Y
+                  </p>
+                )}
+              </div>
+              <div className="bg-[#111] border border-[#222] rounded-lg p-3">
+                <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">EBITDA</p>
+                <p className="text-lg font-bold text-white font-mono">
+                  {data.annual[0]?.ebitda ? `$${(data.annual[0].ebitda / 1e9).toFixed(1)}B` : '—'}
+                </p>
+                {data.annual[0]?.ebitdaGrowth !== null && data.annual[0]?.ebitdaGrowth !== undefined && (
+                  <p className={`text-xs font-mono ${data.annual[0].ebitdaGrowth >= 0 ? 'text-[#00c853]' : 'text-[#ff5252]'}`}>
+                    {data.annual[0].ebitdaGrowth >= 0 ? '+' : ''}{data.annual[0].ebitdaGrowth.toFixed(1)}% Y/Y
+                  </p>
+                )}
+              </div>
+              <div className="bg-[#111] border border-[#222] rounded-lg p-3">
+                <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Operating Margin</p>
+                <p className="text-lg font-bold text-white font-mono">
+                  {data.annual[0]?.operatingMargin ? `${data.annual[0].operatingMargin.toFixed(1)}%` : '—'}
+                </p>
+                <p className="text-xs text-gray-500 font-mono">{data.annual[0]?.period || '—'}</p>
+              </div>
             </div>
 
             {/* Main Tables - LEFT: Quarters | RIGHT: Annual */}
@@ -367,19 +376,18 @@ function Dashboard() {
               </div>
             </div>
 
-            {/* Data Source Note */}
-            <div className="mt-8 p-5 bg-[#0d1321]/50 backdrop-blur-sm border border-white/5 rounded-xl">
+            {/* Data Source Note - Terminal Style */}
+            <div className="mt-6 bg-[#111] border border-[#222] rounded-lg p-3">
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 bg-blue-500/10 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="w-6 h-6 bg-[#2196f3]/10 rounded flex items-center justify-center flex-shrink-0">
+                  <svg className="w-3.5 h-3.5 text-[#2196f3]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-gray-300 mb-1">Data Source</p>
-                  <p className="text-xs text-gray-500 leading-relaxed">
-                    All financial data is sourced directly from SEC EDGAR filings (Form 10-K for annual reports, Form 10-Q for quarterly reports).
-                    EBITDA is calculated as Operating Income + Depreciation & Amortization. Y/Y Growth compares the same period in the prior year.
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Methodology</p>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Data sourced from SEC EDGAR (10-K, 10-Q filings). EBITDA = Operating Income + D&A. Y/Y Growth = (Current - Prior) / |Prior|. N/M = Not Meaningful (sign change).
                   </p>
                 </div>
               </div>
