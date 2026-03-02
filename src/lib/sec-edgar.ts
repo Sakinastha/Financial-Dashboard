@@ -290,6 +290,214 @@ function extractQuarterlyFromYTD(facts: FactData[]): FactData[] {
 }
 
 /**
+ * Extract a SINGLE metric tag from company facts (for iterating through fallbacks)
+ */
+function extractSingleMetric(
+  companyData: Record<string, unknown>,
+  tagName: string,
+  unit: string = 'USD'
+): FactData[] {
+  const facts = companyData?.facts as Record<string, Record<string, unknown>> | undefined;
+  const usGaap = facts?.['us-gaap'];
+  if (!usGaap) return [];
+
+  const concept = usGaap[tagName] as Record<string, unknown> | undefined;
+  if (!concept) return [];
+
+  const units = concept.units as Record<string, FactData[]> | undefined;
+  if (!units || !units[unit]) return [];
+
+  return units[unit];
+}
+
+/**
+ * UNIVERSAL DEPRECIATION EXTRACTION
+ *
+ * This function handles ALL companies on SEC EDGAR by trying multiple strategies:
+ *
+ * 1. First checks if true quarterly data (90-day durations) exists - use it directly
+ * 2. If not, checks for YTD cumulative data and converts to true quarterly
+ * 3. If neither exists for primary tag, tries alternative XBRL tags
+ * 4. Returns empty array if no depreciation data exists (EBITDA will show as N/A)
+ *
+ * Alternative tags tried (in order):
+ * - DepreciationDepletionAndAmortization (most common)
+ * - DepreciationAndAmortization
+ * - Depreciation
+ * - DepreciationAmortizationAndAccretionNet (financial companies)
+ * - AmortizationOfIntangibleAssets (for companies that report separately)
+ * - DepreciationNonproduction
+ * - DepreciationDepletionAndAmortizationExcludingDiscontinuedOperations
+ */
+function extractDepreciationUniversal(
+  companyData: Record<string, unknown>,
+  formTypes: string[]
+): { quarterly: FactData[]; annual: FactData[] } {
+  // Comprehensive list of depreciation XBRL tags in order of preference
+  const depreciationTags = [
+    'DepreciationDepletionAndAmortization',
+    'DepreciationAndAmortization',
+    'Depreciation',
+    'DepreciationAmortizationAndAccretionNet',
+    'AmortizationOfIntangibleAssets',
+    'DepreciationNonproduction',
+    'DepreciationDepletionAndAmortizationExcludingDiscontinuedOperations',
+    'DepreciationExpenseOnReclassifiedAssets',
+    'DepreciationDepletionAndAmortizationPolicyTextBlock', // Rarely used but worth trying
+  ];
+
+  let bestQuarterlyData: FactData[] = [];
+  let bestAnnualData: FactData[] = [];
+  let bestQuarterlyCount = 0;
+  let bestAnnualCount = 0;
+
+  // Try each depreciation tag
+  for (const tag of depreciationTags) {
+    const rawData = extractSingleMetric(companyData, tag);
+    if (rawData.length === 0) continue;
+
+    // Process quarterly data (10-Q forms)
+    const quarterlyFiltered = filterByFormType(rawData, ['10-Q']);
+
+    // Strategy 1: Check for true quarterly data (90-day durations)
+    const trueQuarterly = filterQuarterlyOnly(quarterlyFiltered);
+
+    // Strategy 2: If true quarterly is sparse, try YTD extraction
+    const ytdExtracted = extractQuarterlyFromYTD(quarterlyFiltered);
+
+    // Use whichever strategy gives more data
+    const quarterlyData = trueQuarterly.length >= ytdExtracted.length
+      ? trueQuarterly
+      : ytdExtracted;
+
+    const q1q2q3 = deduplicateByPeriod(quarterlyData)
+      .filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
+
+    // Process annual data (10-K forms)
+    const annualFiltered = filterByFormType(rawData, ['10-K']);
+    const annualOnly = filterAnnualOnly(annualFiltered);
+    const fyData = deduplicateByPeriod(annualOnly)
+      .filter(f => f.fp === 'FY');
+
+    // Keep track of the tag that gives us the most data
+    if (q1q2q3.length > bestQuarterlyCount) {
+      bestQuarterlyData = q1q2q3;
+      bestQuarterlyCount = q1q2q3.length;
+    }
+
+    if (fyData.length > bestAnnualCount) {
+      bestAnnualData = fyData;
+      bestAnnualCount = fyData.length;
+    }
+
+    // If we have good coverage (6+ quarters), we can stop searching
+    if (bestQuarterlyCount >= 6 && bestAnnualCount >= 2) {
+      break;
+    }
+  }
+
+  // If primary tags don't give complete data, try combining multiple tags
+  // Some companies report Depreciation and AmortizationOfIntangibleAssets separately
+  if (bestQuarterlyCount < 6) {
+    const combinedQuarterly = tryCombineDepreciationSources(companyData, ['10-Q']);
+    if (combinedQuarterly.length > bestQuarterlyCount) {
+      bestQuarterlyData = combinedQuarterly;
+    }
+  }
+
+  if (bestAnnualCount < 2) {
+    const combinedAnnual = tryCombineDepreciationSourcesAnnual(companyData, ['10-K']);
+    if (combinedAnnual.length > bestAnnualCount) {
+      bestAnnualData = combinedAnnual;
+    }
+  }
+
+  return {
+    quarterly: bestQuarterlyData,
+    annual: bestAnnualData
+  };
+}
+
+/**
+ * Try combining Depreciation + AmortizationOfIntangibleAssets
+ * Some companies (like certain tech firms) report these separately
+ */
+function tryCombineDepreciationSources(
+  companyData: Record<string, unknown>,
+  formTypes: string[]
+): FactData[] {
+  const depreciation = extractSingleMetric(companyData, 'Depreciation');
+  const amortization = extractSingleMetric(companyData, 'AmortizationOfIntangibleAssets');
+
+  if (depreciation.length === 0 || amortization.length === 0) {
+    return [];
+  }
+
+  // Process each separately
+  const depQuarterly = deduplicateByPeriod(
+    extractQuarterlyFromYTD(filterByFormType(depreciation, formTypes))
+  ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
+
+  const amortQuarterly = deduplicateByPeriod(
+    extractQuarterlyFromYTD(filterByFormType(amortization, formTypes))
+  ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
+
+  // Combine by end date
+  const depMap = new Map(depQuarterly.map(f => [f.end, f]));
+  const results: FactData[] = [];
+
+  for (const amort of amortQuarterly) {
+    const dep = depMap.get(amort.end);
+    if (dep) {
+      results.push({
+        ...dep,
+        val: dep.val + amort.val
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Try combining Depreciation + AmortizationOfIntangibleAssets for annual data
+ */
+function tryCombineDepreciationSourcesAnnual(
+  companyData: Record<string, unknown>,
+  formTypes: string[]
+): FactData[] {
+  const depreciation = extractSingleMetric(companyData, 'Depreciation');
+  const amortization = extractSingleMetric(companyData, 'AmortizationOfIntangibleAssets');
+
+  if (depreciation.length === 0 || amortization.length === 0) {
+    return [];
+  }
+
+  const depAnnual = deduplicateByPeriod(
+    filterAnnualOnly(filterByFormType(depreciation, formTypes))
+  ).filter(f => f.fp === 'FY');
+
+  const amortAnnual = deduplicateByPeriod(
+    filterAnnualOnly(filterByFormType(amortization, formTypes))
+  ).filter(f => f.fp === 'FY');
+
+  const depMap = new Map(depAnnual.map(f => [f.end, f]));
+  const results: FactData[] = [];
+
+  for (const amort of amortAnnual) {
+    const dep = depMap.get(amort.end);
+    if (dep) {
+      results.push({
+        ...dep,
+        val: dep.val + amort.val
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Filter to keep only TRUE annual data (12-month periods)
  *
  * Similar to quarterly, SEC EDGAR may contain partial year data.
@@ -462,18 +670,13 @@ export function parseFinancialData(
     'IncomeLossBeforeIncomeTaxes'              // Banks often use this
   ];
 
-  // For EBITDA, we need Operating Income + Depreciation + Amortization
-  const depreciationTags = [
-    'DepreciationDepletionAndAmortization',
-    'DepreciationAndAmortization',
-    'Depreciation',
-    'DepreciationAmortizationAndAccretionNet'  // Some financial companies
-  ];
-
-  // Extract raw data
+  // Extract raw data for revenue and operating income
   const revenueData = extractMetric(facts, revenueTags);
   const operatingIncomeData = extractMetric(facts, operatingIncomeTags);
-  const depreciationData = extractMetric(facts, depreciationTags);
+
+  // Use UNIVERSAL depreciation extraction
+  // This handles ALL companies by trying multiple strategies and tags
+  const depreciationResult = extractDepreciationUniversal(facts, ['10-Q', '10-K']);
 
   // Process quarterly data (10-Q forms for Q1-Q3)
   // CRITICAL: Filter to TRUE quarterly data only (3-month periods), not YTD cumulative!
@@ -485,13 +688,8 @@ export function parseFinancialData(
     filterQuarterlyOnly(filterByFormType(operatingIncomeData, ['10-Q']))
   ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
 
-  // Depreciation data is often reported as YTD cumulative in SEC filings
-  // Always use extractQuarterlyFromYTD since it handles both cases:
-  // - Uses true quarterly data (90d) when available
-  // - Extracts standalone quarters from YTD cumulative (181d, 272d) when needed
-  const q1q2q3Depreciation = deduplicateByPeriod(
-    extractQuarterlyFromYTD(filterByFormType(depreciationData, ['10-Q']))
-  ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
+  // Depreciation data is already processed by extractDepreciationUniversal
+  const q1q2q3Depreciation = depreciationResult.quarterly;
 
   // Process annual data (10-K forms)
   // CRITICAL: Filter to TRUE annual data only (12-month periods)
@@ -503,9 +701,8 @@ export function parseFinancialData(
     filterAnnualOnly(filterByFormType(operatingIncomeData, ['10-K']))
   ).filter(f => f.fp === 'FY');
 
-  const annualDepreciation = deduplicateByPeriod(
-    filterAnnualOnly(filterByFormType(depreciationData, ['10-K']))
-  ).filter(f => f.fp === 'FY');
+  // Annual depreciation is already processed by extractDepreciationUniversal
+  const annualDepreciation = depreciationResult.annual;
 
   // Calculate Q4 data: Q4 = FY - Q1 - Q2 - Q3
   // This is necessary because Q4 is not filed separately - it's part of the annual 10-K
