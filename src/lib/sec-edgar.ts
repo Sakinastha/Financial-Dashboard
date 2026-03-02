@@ -25,6 +25,7 @@ export interface CompanyFinancials {
   ticker: string;
   companyName: string;
   cik: string;
+  fiscalYearEnd: string;       // e.g., "September" - derived from annual filing end date
   quarterly: FinancialData[];  // Last 8 quarters
   annual: FinancialData[];     // Last 3 fiscal years
 }
@@ -146,11 +147,14 @@ function extractMetric(
       const units = concept.units as Record<string, FactData[]> | undefined;
       if (units && units[unit]) {
         for (const fact of units[unit]) {
-          // Create a unique key for this period
-          const periodKey = `${fact.fy}-${fact.fp}-${fact.form}-${fact.end}`;
+          // Create a unique key that includes BOTH start and end dates
+          // CRITICAL: SEC EDGAR has both YTD cumulative and quarterly data with the SAME end date
+          // Example: Q2 has both 181-day (YTD) and 90-day (quarterly) entries ending on the same date
+          // We need to keep BOTH so the duration filter can select the right one later
+          const periodKey = `${fact.fy}-${fact.fp}-${fact.form}-${fact.start || 'nostart'}-${fact.end}`;
 
           // Only add if we haven't seen this exact period before
-          // This prevents duplicates while allowing different tags to fill gaps
+          // This prevents duplicates while allowing different durations to be captured
           if (!seenPeriods.has(periodKey)) {
             seenPeriods.add(periodKey);
             allData.push(fact);
@@ -175,11 +179,138 @@ function filterByFormType(facts: FactData[], formTypes: string[]): FactData[] {
 }
 
 /**
+ * Filter to keep only TRUE quarterly data (3-month periods), not YTD cumulative
+ *
+ * CRITICAL: SEC EDGAR contains BOTH:
+ * - 3-month quarterly figures (what we want)
+ * - 6-month and 9-month YTD cumulative figures (must exclude!)
+ *
+ * We identify quarterly data by checking the duration between start and end dates.
+ * A true quarter is approximately 90 days (80-100 days to account for variations).
+ */
+function filterQuarterlyOnly(facts: FactData[]): FactData[] {
+  return facts.filter(f => {
+    if (!f.start || !f.end) return true; // Point-in-time facts (balance sheet items)
+
+    const startDate = new Date(f.start);
+    const endDate = new Date(f.end);
+    const durationDays = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    // True quarterly data is approximately 90 days (3 months)
+    // Allow 80-105 days to handle fiscal calendar variations
+    // Some quarters can be 89-92 days depending on month lengths
+    return durationDays >= 80 && durationDays <= 105;
+  });
+}
+
+/**
+ * Extract TRUE quarterly values from YTD cumulative data
+ *
+ * Some SEC EDGAR metrics (like Depreciation) are reported as YTD cumulative:
+ * - Q1: 90-day (true quarterly)
+ * - Q2: 181-day (6-month cumulative = Q1 + Q2)
+ * - Q3: 272-day (9-month cumulative = Q1 + Q2 + Q3)
+ *
+ * This function extracts the true quarterly values by subtracting prior periods.
+ */
+function extractQuarterlyFromYTD(facts: FactData[]): FactData[] {
+  const results: FactData[] = [];
+
+  // Group facts by fiscal year (using end date year)
+  const byFiscalYear = new Map<number, FactData[]>();
+
+  for (const fact of facts) {
+    if (!fact.start || !fact.end) continue;
+
+    const endDate = new Date(fact.end);
+    const year = endDate.getFullYear();
+
+    if (!byFiscalYear.has(year)) {
+      byFiscalYear.set(year, []);
+    }
+    byFiscalYear.get(year)!.push(fact);
+  }
+
+  // Process each fiscal year
+  for (const [year, yearFacts] of byFiscalYear) {
+    // Calculate duration for each fact
+    const withDuration = yearFacts.map(f => {
+      const start = new Date(f.start!);
+      const end = new Date(f.end);
+      const duration = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+      return { fact: f, duration };
+    });
+
+    // Find Q1 (80-105 days), 6-month YTD (170-195 days), 9-month YTD (260-290 days)
+    const q1Data = withDuration.find(d => d.duration >= 80 && d.duration <= 105);
+    const ytd6mo = withDuration.find(d => d.duration >= 170 && d.duration <= 195);
+    const ytd9mo = withDuration.find(d => d.duration >= 260 && d.duration <= 290);
+
+    // Q1 is already true quarterly
+    if (q1Data) {
+      results.push(q1Data.fact);
+    }
+
+    // Q2 = 6-month YTD - Q1
+    if (ytd6mo && q1Data) {
+      const q2Value = ytd6mo.fact.val - q1Data.fact.val;
+      results.push({
+        ...ytd6mo.fact,
+        val: q2Value,
+        fp: 'Q2',
+        start: q1Data.fact.end // Q2 starts after Q1 ends
+      });
+    }
+
+    // Q3 = 9-month YTD - 6-month YTD
+    if (ytd9mo && ytd6mo) {
+      const q3Value = ytd9mo.fact.val - ytd6mo.fact.val;
+      results.push({
+        ...ytd9mo.fact,
+        val: q3Value,
+        fp: 'Q3',
+        start: ytd6mo.fact.end // Q3 starts after Q2 ends
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Filter to keep only TRUE annual data (12-month periods)
+ *
+ * Similar to quarterly, SEC EDGAR may contain partial year data.
+ * We only want full fiscal year figures (approximately 365 days).
+ */
+function filterAnnualOnly(facts: FactData[]): FactData[] {
+  return facts.filter(f => {
+    if (!f.start || !f.end) return true; // Point-in-time facts
+
+    const startDate = new Date(f.start);
+    const endDate = new Date(f.end);
+    const durationDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+
+    // True annual data is approximately 365 days (12 months)
+    // Allow 350-380 days to handle fiscal calendar variations
+    return durationDays >= 350 && durationDays <= 380;
+  });
+}
+
+/**
  * Get unique periods and their latest values
  *
  * Why deduplicate?
  * - Companies may restate numbers or file amendments
  * - We want the most recent filing for each period
+ *
+ * CRITICAL: The SEC EDGAR `fy` field is the FILING year, not the DATA year!
+ * Example: Apple's Q2 FY2025 10-Q (filed May 2025) includes BOTH:
+ * - Q2 FY2025 data (Jan-Mar 2025) as current period
+ * - Q2 FY2024 data (Jan-Mar 2024) as prior year comparison
+ * Both have fy=2025 but they're different periods!
+ *
+ * Solution: Use the actual END DATE to identify unique periods, not fy-fp.
  */
 function deduplicateByPeriod(facts: FactData[]): FactData[] {
   const periodMap = new Map<string, FactData>();
@@ -190,13 +321,94 @@ function deduplicateByPeriod(facts: FactData[]): FactData[] {
   );
 
   for (const fact of sorted) {
-    const key = `${fact.fy}-${fact.fp}`;
+    // Use end date as the unique identifier for a period
+    // This correctly distinguishes between current period and prior year comparison data
+    const key = `${fact.end}-${fact.fp}`;
     if (!periodMap.has(key)) {
       periodMap.set(key, fact);
     }
   }
 
   return Array.from(periodMap.values());
+}
+
+/**
+ * Determine the fiscal year end month from annual filings
+ *
+ * Why is this important for investors?
+ * - Apple's fiscal year ends in September (not December)
+ * - Walmart's fiscal year ends in January
+ * - Knowing this helps interpret quarterly comparisons correctly
+ */
+function determineFiscalYearEnd(annualData: FactData[]): string {
+  if (annualData.length === 0) return 'December'; // Default assumption
+
+  // Get the most recent annual filing
+  const mostRecent = annualData.reduce((latest, current) =>
+    new Date(current.end) > new Date(latest.end) ? current : latest
+  );
+
+  // Extract month from the end date
+  const endDate = new Date(mostRecent.end);
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  return months[endDate.getMonth()];
+}
+
+/**
+ * Calculate Q4 data from annual (FY) minus Q1+Q2+Q3
+ *
+ * Why is this needed?
+ * - Companies don't file a separate 10-Q for Q4
+ * - Q4 data is embedded in the annual 10-K filing
+ * - To show complete quarterly data, we calculate: Q4 = FY - Q1 - Q2 - Q3
+ *
+ * We match quarters to annual data by checking if the quarterly end dates
+ * fall within the same fiscal year period as the annual data.
+ */
+function calculateQ4Data(annualData: FactData[], quarterlyData: FactData[]): FactData[] {
+  const q4Results: FactData[] = [];
+
+  // For each annual period, find the three quarters that belong to it
+  for (const annualFact of annualData) {
+    const fyEndDate = new Date(annualFact.end);
+    const fyStartDate = new Date(fyEndDate);
+    fyStartDate.setFullYear(fyStartDate.getFullYear() - 1);
+
+    // Find Q1, Q2, Q3 that fall within this fiscal year
+    const fyQuarters = quarterlyData.filter(q => {
+      const qEndDate = new Date(q.end);
+      return qEndDate > fyStartDate && qEndDate < fyEndDate;
+    });
+
+    const q1 = fyQuarters.find(q => q.fp === 'Q1');
+    const q2 = fyQuarters.find(q => q.fp === 'Q2');
+    const q3 = fyQuarters.find(q => q.fp === 'Q3');
+
+    // Only calculate Q4 if we have all three quarters
+    if (q1 && q2 && q3) {
+      const q4Value = annualFact.val - q1.val - q2.val - q3.val;
+
+      // Create a synthetic Q4 fact
+      const q4Fact: FactData = {
+        val: q4Value,
+        end: annualFact.end,        // Q4 ends on fiscal year end
+        start: q3.end,               // Q4 starts after Q3 ends
+        fy: annualFact.fy,
+        fp: 'Q4',
+        form: '10-K',                // Q4 is derived from 10-K
+        accn: annualFact.accn,
+        filed: annualFact.filed
+      };
+
+      q4Results.push(q4Fact);
+    }
+  }
+
+  return q4Results;
 }
 
 /**
@@ -251,31 +463,54 @@ export function parseFinancialData(
   const operatingIncomeData = extractMetric(facts, operatingIncomeTags);
   const depreciationData = extractMetric(facts, depreciationTags);
 
-  // Process quarterly data (10-Q forms)
-  const quarterlyRevenue = deduplicateByPeriod(
-    filterByFormType(revenueData, ['10-Q'])
-  ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp)); // Q4 is in 10-K
-
-  const quarterlyOpIncome = deduplicateByPeriod(
-    filterByFormType(operatingIncomeData, ['10-Q'])
+  // Process quarterly data (10-Q forms for Q1-Q3)
+  // CRITICAL: Filter to TRUE quarterly data only (3-month periods), not YTD cumulative!
+  const q1q2q3Revenue = deduplicateByPeriod(
+    filterQuarterlyOnly(filterByFormType(revenueData, ['10-Q']))
   ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
 
-  const quarterlyDepreciation = deduplicateByPeriod(
-    filterByFormType(depreciationData, ['10-Q'])
+  const q1q2q3OpIncome = deduplicateByPeriod(
+    filterQuarterlyOnly(filterByFormType(operatingIncomeData, ['10-Q']))
   ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
+
+  // Depreciation data is often reported as YTD cumulative in SEC filings
+  // First try true quarterly data, then fall back to extracting from YTD
+  const trueQuarterlyDepreciation = deduplicateByPeriod(
+    filterQuarterlyOnly(filterByFormType(depreciationData, ['10-Q']))
+  ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
+
+  // If we don't have Q2/Q3 data, extract from YTD cumulative
+  const hasQ2Q3 = trueQuarterlyDepreciation.some(f => f.fp === 'Q2' || f.fp === 'Q3');
+  const q1q2q3Depreciation = hasQ2Q3
+    ? trueQuarterlyDepreciation
+    : deduplicateByPeriod(
+        extractQuarterlyFromYTD(filterByFormType(depreciationData, ['10-Q']))
+      ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
 
   // Process annual data (10-K forms)
+  // CRITICAL: Filter to TRUE annual data only (12-month periods)
   const annualRevenue = deduplicateByPeriod(
-    filterByFormType(revenueData, ['10-K'])
+    filterAnnualOnly(filterByFormType(revenueData, ['10-K']))
   ).filter(f => f.fp === 'FY');
 
   const annualOpIncome = deduplicateByPeriod(
-    filterByFormType(operatingIncomeData, ['10-K'])
+    filterAnnualOnly(filterByFormType(operatingIncomeData, ['10-K']))
   ).filter(f => f.fp === 'FY');
 
   const annualDepreciation = deduplicateByPeriod(
-    filterByFormType(depreciationData, ['10-K'])
+    filterAnnualOnly(filterByFormType(depreciationData, ['10-K']))
   ).filter(f => f.fp === 'FY');
+
+  // Calculate Q4 data: Q4 = FY - Q1 - Q2 - Q3
+  // This is necessary because Q4 is not filed separately - it's part of the annual 10-K
+  const q4Revenue = calculateQ4Data(annualRevenue, q1q2q3Revenue);
+  const q4OpIncome = calculateQ4Data(annualOpIncome, q1q2q3OpIncome);
+  const q4Depreciation = calculateQ4Data(annualDepreciation, q1q2q3Depreciation);
+
+  // Combine Q1-Q3 with calculated Q4 for complete quarterly data
+  const quarterlyRevenue = [...q1q2q3Revenue, ...q4Revenue];
+  const quarterlyOpIncome = [...q1q2q3OpIncome, ...q4OpIncome];
+  const quarterlyDepreciation = [...q1q2q3Depreciation, ...q4Depreciation];
 
   // Build quarterly financial data
   const quarterly = buildFinancialDataArray(
@@ -295,10 +530,14 @@ export function parseFinancialData(
     false // isQuarterly
   );
 
+  // Determine fiscal year end from the most recent annual filing
+  const fiscalYearEnd = determineFiscalYearEnd(annualRevenue);
+
   return {
     ticker,
     companyName,
     cik,
+    fiscalYearEnd,
     quarterly,
     annual
   };
@@ -306,6 +545,9 @@ export function parseFinancialData(
 
 /**
  * Build the financial data array with calculations
+ *
+ * IMPORTANT: We use the actual END DATE to sort and identify periods,
+ * not the SEC EDGAR `fy` field (which represents filing year, not data year).
  */
 function buildFinancialDataArray(
   revenueData: FactData[],
@@ -314,41 +556,35 @@ function buildFinancialDataArray(
   limit: number,
   isQuarterly: boolean
 ): FinancialData[] {
-  // Create maps for quick lookup
-  const revenueMap = new Map(revenueData.map(f => [`${f.fy}-${f.fp}`, f]));
-  const opIncomeMap = new Map(opIncomeData.map(f => [`${f.fy}-${f.fp}`, f]));
-  const depreciationMap = new Map(depreciationData.map(f => [`${f.fy}-${f.fp}`, f]));
+  // Create maps using END DATE as key (more reliable than fy-fp)
+  const revenueMap = new Map(revenueData.map(f => [f.end, f]));
+  const opIncomeMap = new Map(opIncomeData.map(f => [f.end, f]));
+  const depreciationMap = new Map(depreciationData.map(f => [f.end, f]));
 
-  // Get all unique periods
-  const allPeriods = new Set([
-    ...revenueData.map(f => `${f.fy}-${f.fp}`),
-    ...opIncomeData.map(f => `${f.fy}-${f.fp}`)
+  // Get all unique end dates
+  const allEndDates = new Set([
+    ...revenueData.map(f => f.end),
+    ...opIncomeData.map(f => f.end)
   ]);
 
-  // Sort periods by fiscal year and quarter (descending - most recent first)
-  const sortedPeriods = Array.from(allPeriods).sort((a, b) => {
-    const [yearA, fpA] = a.split('-');
-    const [yearB, fpB] = b.split('-');
-
-    if (yearA !== yearB) return parseInt(yearB) - parseInt(yearA);
-
-    // Sort quarters: Q4 > Q3 > Q2 > Q1
-    const qOrder: Record<string, number> = { 'FY': 5, 'Q4': 4, 'Q3': 3, 'Q2': 2, 'Q1': 1 };
-    return (qOrder[fpB] || 0) - (qOrder[fpA] || 0);
-  });
+  // Sort by end date descending (most recent first)
+  // Filter out future dates (some SEC filings contain projections)
+  const today = new Date();
+  const sortedEndDates = Array.from(allEndDates)
+    .filter(d => d && new Date(d) <= today) // Remove empty dates and future dates
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
 
   // Take only the most recent periods
-  const recentPeriods = sortedPeriods.slice(0, limit + 4); // Extra for Y/Y calculation
+  const recentEndDates = sortedEndDates.slice(0, limit + 8); // Extra for Y/Y calculation
 
   const results: FinancialData[] = [];
 
-  for (let i = 0; i < Math.min(limit, recentPeriods.length); i++) {
-    const periodKey = recentPeriods[i];
-    const [fy, fp] = periodKey.split('-');
+  for (let i = 0; i < Math.min(limit, recentEndDates.length); i++) {
+    const endDate = recentEndDates[i];
 
-    const revenueFact = revenueMap.get(periodKey);
-    const opIncomeFact = opIncomeMap.get(periodKey);
-    const depreciationFact = depreciationMap.get(periodKey);
+    const revenueFact = revenueMap.get(endDate);
+    const opIncomeFact = opIncomeMap.get(endDate);
+    const depreciationFact = depreciationMap.get(endDate);
 
     const revenue = revenueFact?.val ?? null;
     const operatingIncome = opIncomeFact?.val ?? null;
@@ -359,11 +595,20 @@ function buildFinancialDataArray(
       ? operatingIncome + depreciation
       : null;
 
-    // Find prior year for Y/Y growth calculation
-    const priorYearKey = `${parseInt(fy) - 1}-${fp}`;
-    const priorRevenue = revenueMap.get(priorYearKey)?.val ?? null;
-    const priorOpIncome = opIncomeMap.get(priorYearKey)?.val ?? null;
-    const priorDepreciation = depreciationMap.get(priorYearKey)?.val ?? null;
+    // Find prior year (approximately 365 days earlier) for Y/Y growth
+    const currentDate = new Date(endDate);
+    const priorYearTarget = new Date(currentDate);
+    priorYearTarget.setFullYear(priorYearTarget.getFullYear() - 1);
+
+    // Find the closest date to 1 year ago (within 30 days)
+    const priorEndDate = recentEndDates.find(d => {
+      const diff = Math.abs(new Date(d).getTime() - priorYearTarget.getTime());
+      return diff < 30 * 24 * 60 * 60 * 1000; // Within 30 days
+    });
+
+    const priorRevenue = priorEndDate ? revenueMap.get(priorEndDate)?.val ?? null : null;
+    const priorOpIncome = priorEndDate ? opIncomeMap.get(priorEndDate)?.val ?? null : null;
+    const priorDepreciation = priorEndDate ? depreciationMap.get(priorEndDate)?.val ?? null : null;
     const priorEbitda = (priorOpIncome !== null && priorDepreciation !== null)
       ? priorOpIncome + priorDepreciation
       : null;
@@ -381,12 +626,14 @@ function buildFinancialDataArray(
       ? (ebitda / revenue) * 100
       : null;
 
-    // Format period string
-    const period = isQuarterly ? `${fp} ${fy}` : `FY ${fy}`;
+    // Format period string from the actual quarter designation
+    const fp = revenueFact?.fp || opIncomeFact?.fp || 'Q?';
+    const periodYear = deriveFiscalYear(endDate, fp);
+    const period = isQuarterly ? `${fp} ${periodYear}` : `FY ${periodYear}`;
 
     results.push({
       period,
-      endDate: revenueFact?.end || opIncomeFact?.end || '',
+      endDate,
       revenue,
       operatingIncome,
       ebitda,
@@ -402,11 +649,45 @@ function buildFinancialDataArray(
 }
 
 /**
+ * Derive the fiscal year from the end date
+ * Most companies have fiscal years ending in December, but some (like Apple) end in other months.
+ * For simplicity, we use the calendar year of the end date as the fiscal year.
+ */
+function deriveFiscalYear(endDate: string, fp: string): number {
+  const date = new Date(endDate);
+  const year = date.getFullYear();
+  const month = date.getMonth(); // 0-11
+
+  // For Q4/FY, the fiscal year is the year of the end date
+  // For Q1/Q2/Q3, we need to check if this is a company with non-calendar fiscal year
+  // Simple heuristic: if Q1 ends in Dec/Jan, the FY is the next calendar year
+  if (fp === 'Q1' && month >= 9) { // Oct, Nov, Dec
+    return year + 1; // This Q1 belongs to next fiscal year
+  }
+
+  return year;
+}
+
+/**
  * Calculate year-over-year growth percentage
+ *
+ * Returns null for:
+ * - Missing data (current or prior is null)
+ * - Division by zero (prior is 0)
+ * - Sign changes (e.g., loss to profit) - shown as "N/M" in finance
  */
 function calculateGrowth(current: number | null, prior: number | null): number | null {
   if (current === null || prior === null || prior === 0) {
     return null;
   }
+
+  // Handle sign changes - when a company goes from loss to profit or vice versa,
+  // percentage growth is not meaningful (standard finance practice to show "N/M")
+  const currentSign = current >= 0 ? 1 : -1;
+  const priorSign = prior >= 0 ? 1 : -1;
+  if (currentSign !== priorSign) {
+    return null; // Will display as "N/M" (Not Meaningful)
+  }
+
   return ((current - prior) / Math.abs(prior)) * 100;
 }
