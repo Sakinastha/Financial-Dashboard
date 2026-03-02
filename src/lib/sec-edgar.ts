@@ -212,64 +212,76 @@ function filterQuarterlyOnly(facts: FactData[]): FactData[] {
  * - Q3: 272-day (9-month cumulative = Q1 + Q2 + Q3)
  *
  * This function extracts the true quarterly values by subtracting prior periods.
+ * It works by finding date-based relationships rather than grouping by calendar year,
+ * which makes it work correctly for companies with non-December fiscal year ends.
  */
 function extractQuarterlyFromYTD(facts: FactData[]): FactData[] {
   const results: FactData[] = [];
+  const seenEndDates = new Set<string>();
 
-  // Group facts by fiscal year (using end date year)
-  const byFiscalYear = new Map<number, FactData[]>();
-
-  for (const fact of facts) {
-    if (!fact.start || !fact.end) continue;
-
-    const endDate = new Date(fact.end);
-    const year = endDate.getFullYear();
-
-    if (!byFiscalYear.has(year)) {
-      byFiscalYear.set(year, []);
-    }
-    byFiscalYear.get(year)!.push(fact);
-  }
-
-  // Process each fiscal year
-  for (const [year, yearFacts] of byFiscalYear) {
-    // Calculate duration for each fact
-    const withDuration = yearFacts.map(f => {
+  // Calculate duration for each fact
+  const withDuration = facts
+    .filter(f => f.start && f.end)
+    .map(f => {
       const start = new Date(f.start!);
       const end = new Date(f.end);
       const duration = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-      return { fact: f, duration };
+      return { fact: f, duration, endTime: end.getTime() };
     });
 
-    // Find Q1 (80-105 days), 6-month YTD (170-195 days), 9-month YTD (260-290 days)
-    const q1Data = withDuration.find(d => d.duration >= 80 && d.duration <= 105);
-    const ytd6mo = withDuration.find(d => d.duration >= 170 && d.duration <= 195);
-    const ytd9mo = withDuration.find(d => d.duration >= 260 && d.duration <= 290);
+  // Separate by duration type
+  const quarterly = withDuration.filter(d => d.duration >= 80 && d.duration <= 105);   // ~90 days
+  const ytd6mo = withDuration.filter(d => d.duration >= 170 && d.duration <= 195);     // ~181 days
+  const ytd9mo = withDuration.filter(d => d.duration >= 260 && d.duration <= 290);     // ~272 days
 
-    // Q1 is already true quarterly
-    if (q1Data) {
-      results.push(q1Data.fact);
+  // Add all true quarterly data (Q1s)
+  for (const q of quarterly) {
+    if (!seenEndDates.has(q.fact.end)) {
+      seenEndDates.add(q.fact.end);
+      results.push(q.fact);
     }
+  }
 
-    // Q2 = 6-month YTD - Q1
-    if (ytd6mo && q1Data) {
-      const q2Value = ytd6mo.fact.val - q1Data.fact.val;
+  // For each 6-month YTD, find the Q1 that ends ~90 days before and calculate Q2
+  for (const ytd of ytd6mo) {
+    if (seenEndDates.has(ytd.fact.end)) continue;
+
+    // Find Q1 ending approximately 90 days before this YTD ends
+    const q1 = quarterly.find(q => {
+      const daysDiff = (ytd.endTime - q.endTime) / (1000 * 60 * 60 * 24);
+      return daysDiff >= 75 && daysDiff <= 110; // Q1 should end ~90 days before Q2
+    });
+
+    if (q1) {
+      const q2Value = ytd.fact.val - q1.fact.val;
+      seenEndDates.add(ytd.fact.end);
       results.push({
-        ...ytd6mo.fact,
+        ...ytd.fact,
         val: q2Value,
         fp: 'Q2',
-        start: q1Data.fact.end // Q2 starts after Q1 ends
+        start: q1.fact.end
       });
     }
+  }
 
-    // Q3 = 9-month YTD - 6-month YTD
-    if (ytd9mo && ytd6mo) {
-      const q3Value = ytd9mo.fact.val - ytd6mo.fact.val;
+  // For each 9-month YTD, find the 6-month YTD that ends ~90 days before and calculate Q3
+  for (const ytd of ytd9mo) {
+    if (seenEndDates.has(ytd.fact.end)) continue;
+
+    // Find 6-month YTD ending approximately 90 days before this 9-month YTD ends
+    const prior6mo = ytd6mo.find(y => {
+      const daysDiff = (ytd.endTime - y.endTime) / (1000 * 60 * 60 * 24);
+      return daysDiff >= 75 && daysDiff <= 110;
+    });
+
+    if (prior6mo) {
+      const q3Value = ytd.fact.val - prior6mo.fact.val;
+      seenEndDates.add(ytd.fact.end);
       results.push({
-        ...ytd9mo.fact,
+        ...ytd.fact,
         val: q3Value,
         fp: 'Q3',
-        start: ytd6mo.fact.end // Q3 starts after Q2 ends
+        start: prior6mo.fact.end
       });
     }
   }
@@ -474,18 +486,12 @@ export function parseFinancialData(
   ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
 
   // Depreciation data is often reported as YTD cumulative in SEC filings
-  // First try true quarterly data, then fall back to extracting from YTD
-  const trueQuarterlyDepreciation = deduplicateByPeriod(
-    filterQuarterlyOnly(filterByFormType(depreciationData, ['10-Q']))
+  // Always use extractQuarterlyFromYTD since it handles both cases:
+  // - Uses true quarterly data (90d) when available
+  // - Extracts standalone quarters from YTD cumulative (181d, 272d) when needed
+  const q1q2q3Depreciation = deduplicateByPeriod(
+    extractQuarterlyFromYTD(filterByFormType(depreciationData, ['10-Q']))
   ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
-
-  // If we don't have Q2/Q3 data, extract from YTD cumulative
-  const hasQ2Q3 = trueQuarterlyDepreciation.some(f => f.fp === 'Q2' || f.fp === 'Q3');
-  const q1q2q3Depreciation = hasQ2Q3
-    ? trueQuarterlyDepreciation
-    : deduplicateByPeriod(
-        extractQuarterlyFromYTD(filterByFormType(depreciationData, ['10-Q']))
-      ).filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
 
   // Process annual data (10-K forms)
   // CRITICAL: Filter to TRUE annual data only (12-month periods)
@@ -511,6 +517,7 @@ export function parseFinancialData(
   const quarterlyRevenue = [...q1q2q3Revenue, ...q4Revenue];
   const quarterlyOpIncome = [...q1q2q3OpIncome, ...q4OpIncome];
   const quarterlyDepreciation = [...q1q2q3Depreciation, ...q4Depreciation];
+
 
   // Build quarterly financial data
   const quarterly = buildFinancialDataArray(

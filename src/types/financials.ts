@@ -24,6 +24,7 @@ export interface CompanyFinancials {
   ticker: string;
   companyName: string;
   cik: string;
+  fiscalYearEnd: string;  // e.g., "September" - important for investors to know
   quarterly: FinancialData[];
   annual: FinancialData[];
 }
