@@ -56,19 +56,47 @@ export async function GET(request: NextRequest) {
 
     const tickers = await getTickerList();
 
-    // Search by ticker OR company name
-    const results = tickers
-      .filter(item =>
-        item.ticker.toLowerCase().includes(query) ||
-        item.name.toLowerCase().includes(query)
-      )
-      .slice(0, 10) // Limit to 10 results for performance
+    // Score and rank results by relevance
+    // Priority: exact ticker > ticker starts with > name starts with > contains
+    const scored = tickers
+      .map(item => {
+        const tickerLower = item.ticker.toLowerCase();
+        const nameLower = item.name.toLowerCase();
+
+        let score = 0;
+
+        // Exact ticker match (highest priority)
+        if (tickerLower === query) {
+          score = 100;
+        }
+        // Ticker starts with query
+        else if (tickerLower.startsWith(query)) {
+          score = 80;
+        }
+        // Company name starts with query
+        else if (nameLower.startsWith(query)) {
+          score = 60;
+        }
+        // Ticker contains query
+        else if (tickerLower.includes(query)) {
+          score = 40;
+        }
+        // Name contains query (but filter out just matching "Inc." etc.)
+        else if (nameLower.includes(query) && query.length >= 2) {
+          score = 20;
+        }
+
+        return { ...item, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
       .map(item => ({
         ticker: item.ticker,
         name: item.name
       }));
 
-    return NextResponse.json(results);
+    return NextResponse.json(scored);
 
   } catch (error) {
     console.error('Error in /api/tickers:', error);

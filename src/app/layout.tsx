@@ -1,15 +1,35 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono, Bebas_Neue, Libre_Baskerville } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Primary font - Clean, modern sans-serif for UI and body text
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+// Monospace font - For financial data, numbers, and tickers
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-mono",
   subsets: ["latin"],
+  display: "swap",
+});
+
+// Display font - Bold, condensed for headlines
+const bebasNeue = Bebas_Neue({
+  variable: "--font-display",
+  subsets: ["latin"],
+  weight: "400",
+  display: "swap",
+});
+
+// Serif font - Elegant, editorial for accent text
+const libreBaskerville = Libre_Baskerville({
+  variable: "--font-serif",
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -25,7 +45,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${inter.variable} ${jetbrainsMono.variable} ${bebasNeue.variable} ${libreBaskerville.variable} antialiased`}
       >
         {children}
       </body>

@@ -42,10 +42,10 @@ export async function GET(request: NextRequest) {
     // Clean the ticker (remove spaces, uppercase)
     const cleanTicker = ticker.trim().toUpperCase();
 
-    // Validate ticker format (1-5 letters)
-    if (!/^[A-Z]{1,5}$/.test(cleanTicker)) {
+    // Validate ticker format (1-5 letters, may include dash for share classes like BRK-B)
+    if (!/^[A-Z]{1,5}(-[A-Z]{1,2})?$/.test(cleanTicker)) {
       return NextResponse.json(
-        { error: 'Invalid ticker format. Ticker should be 1-5 letters.' },
+        { error: 'Invalid ticker format. Ticker should be 1-5 letters (e.g., AAPL, BRK-B).' },
         { status: 400 }
       );
     }

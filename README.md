@@ -2,7 +2,7 @@
 
 A single-page financial dashboard web application that allows users to search for any US-listed company by ticker symbol and view key financial metrics sourced directly from SEC EDGAR filings.
 
-**Live Demo:** [Add your deployed URL here]
+**Live Demo:** https://financial-dashboard-sigma-sand.vercel.app
 
 ---
 
@@ -38,12 +38,11 @@ A single-page financial dashboard web application that allows users to search fo
 
 | Category | Technology |
 |----------|------------|
-| Framework | Next.js 16.1.6 (App Router) |
-| UI Library | React 19.2.3 |
+| Framework | Next.js 16 (App Router) |
+| UI Library | React 19 |
 | Language | TypeScript 5 |
-| Styling | Tailwind CSS 4 |
-| Animations | GSAP 3.14.2 |
-| Data Source | SEC EDGAR XBRL API |
+| Styling | styled-jsx (built into Next.js) |
+| Data Source | SEC EDGAR XBRL API (no API key required) |
 
 ---
 
@@ -91,21 +90,16 @@ src/
 │   ├── api/
 │   │   ├── financials/route.ts    # Fetch company financial data
 │   │   └── tickers/route.ts       # Ticker autocomplete search
-│   ├── globals.css                # Design system & styles
+│   ├── globals.css                # Global styles, CSS variables
 │   ├── layout.tsx                 # Root layout
-│   └── page.tsx                   # Main dashboard page
-├── components/
-│   ├── layout/                    # Header, Footer
-│   ├── metrics/                   # MetricCard component
-│   ├── search/                    # AnimatedSearchInput
-│   ├── states/                    # Empty, Loading, Error states
-│   ├── ui/                        # Reusable UI components
-│   └── FinancialTable.tsx         # Financial data table
+│   └── page.tsx                   # Main dashboard (all components inline)
 ├── lib/
 │   └── sec-edgar.ts               # SEC EDGAR API integration
 └── types/
     └── financials.ts              # TypeScript interfaces
 ```
+
+**Note:** All UI components are defined inline in `page.tsx` for simplicity.
 
 ---
 

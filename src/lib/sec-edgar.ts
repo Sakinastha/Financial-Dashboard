@@ -230,9 +230,11 @@ function extractQuarterlyFromYTD(facts: FactData[]): FactData[] {
     });
 
   // Separate by duration type
+  // Note: Ranges are widened to accommodate companies with non-standard fiscal calendars
+  // (e.g., COST has Q2 at 167 days and Q3 at 251 days instead of standard 181/272)
   const quarterly = withDuration.filter(d => d.duration >= 80 && d.duration <= 105);   // ~90 days
-  const ytd6mo = withDuration.filter(d => d.duration >= 170 && d.duration <= 195);     // ~181 days
-  const ytd9mo = withDuration.filter(d => d.duration >= 260 && d.duration <= 290);     // ~272 days
+  const ytd6mo = withDuration.filter(d => d.duration >= 160 && d.duration <= 200);     // ~181 days (was 170-195)
+  const ytd9mo = withDuration.filter(d => d.duration >= 245 && d.duration <= 295);     // ~272 days (was 260-290)
 
   // Add all true quarterly data (Q1s)
   for (const q of quarterly) {
@@ -313,27 +315,20 @@ function extractSingleMetric(
 /**
  * UNIVERSAL DEPRECIATION EXTRACTION
  *
- * This function handles ALL companies on SEC EDGAR by trying multiple strategies:
+ * This function handles ALL companies on SEC EDGAR by:
+ * 1. Collecting data from ALL depreciation tags
+ * 2. Merging by end date to fill gaps (some companies use different tags for different quarters)
+ * 3. Preferring tags with more recent data when duplicates exist
  *
- * 1. First checks if true quarterly data (90-day durations) exists - use it directly
- * 2. If not, checks for YTD cumulative data and converts to true quarterly
- * 3. If neither exists for primary tag, tries alternative XBRL tags
- * 4. Returns empty array if no depreciation data exists (EBITDA will show as N/A)
- *
- * Alternative tags tried (in order):
- * - DepreciationDepletionAndAmortization (most common)
- * - DepreciationAndAmortization
- * - Depreciation
- * - DepreciationAmortizationAndAccretionNet (financial companies)
- * - AmortizationOfIntangibleAssets (for companies that report separately)
- * - DepreciationNonproduction
- * - DepreciationDepletionAndAmortizationExcludingDiscontinuedOperations
+ * Why merge instead of selecting one tag?
+ * - NKE uses DepreciationDepletionAndAmortization for Q1/Q2 but Depreciation for Q3
+ * - INTC switched tags over time
+ * - Merging ensures we capture all available data
  */
 function extractDepreciationUniversal(
-  companyData: Record<string, unknown>,
-  formTypes: string[]
+  companyData: Record<string, unknown>
 ): { quarterly: FactData[]; annual: FactData[] } {
-  // Comprehensive list of depreciation XBRL tags in order of preference
+  // Comprehensive list of depreciation XBRL tags
   const depreciationTags = [
     'DepreciationDepletionAndAmortization',
     'DepreciationAndAmortization',
@@ -343,15 +338,14 @@ function extractDepreciationUniversal(
     'DepreciationNonproduction',
     'DepreciationDepletionAndAmortizationExcludingDiscontinuedOperations',
     'DepreciationExpenseOnReclassifiedAssets',
-    'DepreciationDepletionAndAmortizationPolicyTextBlock', // Rarely used but worth trying
+    'OtherDepreciationAndAmortization',  // Used by ABNB and some tech companies
   ];
 
-  let bestQuarterlyData: FactData[] = [];
-  let bestAnnualData: FactData[] = [];
-  let bestQuarterlyCount = 0;
-  let bestAnnualCount = 0;
+  // Collect ALL data from ALL tags, keyed by end date
+  // Use Map to store best data for each end date
+  const quarterlyByDate = new Map<string, { fact: FactData; filedDate: Date }>();
+  const annualByDate = new Map<string, { fact: FactData; filedDate: Date }>();
 
-  // Try each depreciation tag
   for (const tag of depreciationTags) {
     const rawData = extractSingleMetric(companyData, tag);
     if (rawData.length === 0) continue;
@@ -359,19 +353,32 @@ function extractDepreciationUniversal(
     // Process quarterly data (10-Q forms)
     const quarterlyFiltered = filterByFormType(rawData, ['10-Q']);
 
-    // Strategy 1: Check for true quarterly data (90-day durations)
+    // Try both strategies and combine results
     const trueQuarterly = filterQuarterlyOnly(quarterlyFiltered);
-
-    // Strategy 2: If true quarterly is sparse, try YTD extraction
     const ytdExtracted = extractQuarterlyFromYTD(quarterlyFiltered);
 
-    // Use whichever strategy gives more data
-    const quarterlyData = trueQuarterly.length >= ytdExtracted.length
-      ? trueQuarterly
-      : ytdExtracted;
+    // Merge both strategies - some companies have partial data in each
+    const allQuarterly = [...trueQuarterly];
+    const trueQuarterlyDates = new Set(trueQuarterly.map(f => f.end));
+    for (const ytdFact of ytdExtracted) {
+      if (!trueQuarterlyDates.has(ytdFact.end)) {
+        allQuarterly.push(ytdFact);
+      }
+    }
 
-    const q1q2q3 = deduplicateByPeriod(quarterlyData)
+    // Filter to Q1/Q2/Q3 and add to merged map
+    const q1q2q3 = deduplicateByPeriod(allQuarterly)
       .filter(f => ['Q1', 'Q2', 'Q3'].includes(f.fp));
+
+    for (const fact of q1q2q3) {
+      const existing = quarterlyByDate.get(fact.end);
+      const factFiledDate = new Date(fact.filed);
+
+      // Add if: no existing data, OR this data is more recently filed
+      if (!existing || factFiledDate > existing.filedDate) {
+        quarterlyByDate.set(fact.end, { fact, filedDate: factFiledDate });
+      }
+    }
 
     // Process annual data (10-K forms)
     const annualFiltered = filterByFormType(rawData, ['10-K']);
@@ -379,42 +386,45 @@ function extractDepreciationUniversal(
     const fyData = deduplicateByPeriod(annualOnly)
       .filter(f => f.fp === 'FY');
 
-    // Keep track of the tag that gives us the most data
-    if (q1q2q3.length > bestQuarterlyCount) {
-      bestQuarterlyData = q1q2q3;
-      bestQuarterlyCount = q1q2q3.length;
-    }
+    for (const fact of fyData) {
+      const existing = annualByDate.get(fact.end);
+      const factFiledDate = new Date(fact.filed);
 
-    if (fyData.length > bestAnnualCount) {
-      bestAnnualData = fyData;
-      bestAnnualCount = fyData.length;
-    }
-
-    // If we have good coverage (6+ quarters), we can stop searching
-    if (bestQuarterlyCount >= 6 && bestAnnualCount >= 2) {
-      break;
+      if (!existing || factFiledDate > existing.filedDate) {
+        annualByDate.set(fact.end, { fact, filedDate: factFiledDate });
+      }
     }
   }
 
-  // If primary tags don't give complete data, try combining multiple tags
-  // Some companies report Depreciation and AmortizationOfIntangibleAssets separately
-  if (bestQuarterlyCount < 6) {
+  // Convert maps back to arrays
+  const mergedQuarterly = Array.from(quarterlyByDate.values()).map(v => v.fact);
+  const mergedAnnual = Array.from(annualByDate.values()).map(v => v.fact);
+
+  // If merged data is still sparse, try combining Depreciation + AmortizationOfIntangibleAssets
+  if (mergedQuarterly.length < 6) {
     const combinedQuarterly = tryCombineDepreciationSources(companyData, ['10-Q']);
-    if (combinedQuarterly.length > bestQuarterlyCount) {
-      bestQuarterlyData = combinedQuarterly;
+    // Add any dates we don't already have
+    const existingDates = new Set(mergedQuarterly.map(f => f.end));
+    for (const fact of combinedQuarterly) {
+      if (!existingDates.has(fact.end)) {
+        mergedQuarterly.push(fact);
+      }
     }
   }
 
-  if (bestAnnualCount < 2) {
+  if (mergedAnnual.length < 2) {
     const combinedAnnual = tryCombineDepreciationSourcesAnnual(companyData, ['10-K']);
-    if (combinedAnnual.length > bestAnnualCount) {
-      bestAnnualData = combinedAnnual;
+    const existingDates = new Set(mergedAnnual.map(f => f.end));
+    for (const fact of combinedAnnual) {
+      if (!existingDates.has(fact.end)) {
+        mergedAnnual.push(fact);
+      }
     }
   }
 
   return {
-    quarterly: bestQuarterlyData,
-    annual: bestAnnualData
+    quarterly: mergedQuarterly,
+    annual: mergedAnnual
   };
 }
 
@@ -642,20 +652,30 @@ export function parseFinancialData(
 ): CompanyFinancials {
   // XBRL tags for each metric (in order of preference)
   // Why so many tags? Different industries use different accounting:
-  // - Regular companies: RevenueFromContractWithCustomer, Revenues
+  // - Regular companies: Revenues, RevenueFromContractWithCustomer
   // - Banks/Financial: RevenuesNetOfInterestExpense, InterestAndDividendIncomeOperating
   // - Insurance: PremiumsEarnedNet
+  //
+  // IMPORTANT: Revenues must come BEFORE RevenueFromContractWithCustomer
+  // because some companies (like AMT) have both tags where:
+  // - Revenues = total revenue ($2.72B)
+  // - RevenueFromContractWithCustomer = partial revenue ($0.25B)
+  // The first matching tag wins for overlapping periods.
+  //
+  // BANK NOTE: Regional banks like TFC use InterestIncomeExpenseNet (Net Interest Income)
+  // as their primary revenue metric. This must come before NoninterestIncome.
   const revenueTags = [
-    'RevenueFromContractWithCustomerExcludingAssessedTax',
     'Revenues',
+    'RevenueFromContractWithCustomerExcludingAssessedTax',
     'RevenuesNetOfInterestExpense',           // Banks (Morgan Stanley, Goldman Sachs)
-    'InterestAndNoninterestIncome',           // Banks
+    'InterestAndNoninterestIncome',           // Banks - combined interest + fee income
+    'InterestIncomeExpenseNet',               // Banks - Net Interest Income (TFC, regional banks)
     'SalesRevenueNet',
     'SalesRevenueGoodsNet',
     'TotalRevenuesAndOtherIncome',
     'RevenueFromContractWithCustomerIncludingAssessedTax',
-    'NoninterestIncome',                       // Banks - fee income
-    'InterestAndDividendIncomeOperating',     // Banks - interest income
+    'InterestAndDividendIncomeOperating',     // Banks - gross interest income
+    'NoninterestIncome',                       // Banks - fee income only (fallback)
     'PremiumsEarnedNet',                       // Insurance companies
     'TotalRevenues'
   ];
@@ -674,9 +694,11 @@ export function parseFinancialData(
   const revenueData = extractMetric(facts, revenueTags);
   const operatingIncomeData = extractMetric(facts, operatingIncomeTags);
 
+  // Write revenueData to file for debugging                                                                                
+
   // Use UNIVERSAL depreciation extraction
   // This handles ALL companies by trying multiple strategies and tags
-  const depreciationResult = extractDepreciationUniversal(facts, ['10-Q', '10-K']);
+  const depreciationResult = extractDepreciationUniversal(facts);
 
   // Process quarterly data (10-Q forms for Q1-Q3)
   // CRITICAL: Filter to TRUE quarterly data only (3-month periods), not YTD cumulative!
@@ -823,12 +845,31 @@ function buildFinancialDataArray(
     const ebitdaGrowth = calculateGrowth(ebitda, priorEbitda);
 
     // Calculate margins
-    const operatingMargin = (operatingIncome !== null && revenue !== null && revenue !== 0)
+    let operatingMargin = (operatingIncome !== null && revenue !== null && revenue !== 0)
       ? (operatingIncome / revenue) * 100
       : null;
-    const ebitdaMargin = (ebitda !== null && revenue !== null && revenue !== 0)
+    let ebitdaMargin = (ebitda !== null && revenue !== null && revenue !== 0)
       ? (ebitda / revenue) * 100
       : null;
+
+    // SANITY CHECK: Operating margin cannot exceed 100% (operating income cannot exceed revenue)
+    // This can happen when Q4 is calculated as FY - Q1 - Q2 - Q3 and the annual data has been
+    // restated differently than the quarterly data (e.g., APP Q4 2025 shows 108% margin).
+    // In such cases, null out the calculated values as they are unreliable.
+    let sanitizedOperatingIncome = operatingIncome;
+    let sanitizedEbitda = ebitda;
+    let sanitizedOpIncomeGrowth = operatingIncomeGrowth;
+    let sanitizedEbitdaGrowth = ebitdaGrowth;
+
+    if (operatingMargin !== null && operatingMargin > 100) {
+      // Impossible margin - null out the bad data
+      sanitizedOperatingIncome = null;
+      sanitizedEbitda = null;
+      operatingMargin = null;
+      ebitdaMargin = null;
+      sanitizedOpIncomeGrowth = null;
+      sanitizedEbitdaGrowth = null;
+    }
 
     // Format period string from the actual quarter designation
     const fp = revenueFact?.fp || opIncomeFact?.fp || 'Q?';
@@ -839,11 +880,11 @@ function buildFinancialDataArray(
       period,
       endDate,
       revenue,
-      operatingIncome,
-      ebitda,
+      operatingIncome: sanitizedOperatingIncome,
+      ebitda: sanitizedEbitda,
       revenueGrowth,
-      operatingIncomeGrowth,
-      ebitdaGrowth,
+      operatingIncomeGrowth: sanitizedOpIncomeGrowth,
+      ebitdaGrowth: sanitizedEbitdaGrowth,
       operatingMargin,
       ebitdaMargin
     });
@@ -875,22 +916,16 @@ function deriveFiscalYear(endDate: string, fp: string): number {
 /**
  * Calculate year-over-year growth percentage
  *
- * Returns null for:
+ * Returns null only for:
  * - Missing data (current or prior is null)
  * - Division by zero (prior is 0)
- * - Sign changes (e.g., loss to profit) - shown as "N/M" in finance
+ *
+ * Sign changes (loss to profit or vice versa) are calculated normally
+ * using absolute value of prior period.
  */
 function calculateGrowth(current: number | null, prior: number | null): number | null {
   if (current === null || prior === null || prior === 0) {
     return null;
-  }
-
-  // Handle sign changes - when a company goes from loss to profit or vice versa,
-  // percentage growth is not meaningful (standard finance practice to show "N/M")
-  const currentSign = current >= 0 ? 1 : -1;
-  const priorSign = prior >= 0 ? 1 : -1;
-  if (currentSign !== priorSign) {
-    return null; // Will display as "N/M" (Not Meaningful)
   }
 
   return ((current - prior) / Math.abs(prior)) * 100;
