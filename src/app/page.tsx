@@ -758,8 +758,8 @@ function LandingPage({
 
         .footer-note {
           margin-top: 48px;
-          font-size: 10px;
-          color: #3a3a3a;
+          font-size: 14px;
+          color: #555;
           letter-spacing: 0.5px;
           line-height: 1.8;
         }
